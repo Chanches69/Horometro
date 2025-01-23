@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machine Data Processing</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        .container { margin: 20px; }
+        #machine-section { display: none; }
+        #api-section { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Calculador de Horometro</h1>
+
+        <h2>Elija el origen de sus datos</h2>
+        <button onclick="toggleSource('file')">Subir archivo CSV</button>
+        <button onclick="toggleSource('api')">Obtener desde API</button>
+
+        <!-- File Upload Section -->
+        <div id="file-section" style="display:none;">
+            <h2>Subir archivo CSV</h2>
+            <input type="file" id="csv-file" accept=".csv">
+            <button onclick="parseFile()">Analizar archivo</button>
+        </div>
+
+        <!-- API Fetch Section -->
+        <div id="api-section">
+            <h2>Obtener desde API</h2>
+            <label for="api-key">API Key:</label>
+            <input type="text" id="api-key" placeholder="Enter API Key">
+            <br>
+            <label for="form-id">Form ID:</label>
+            <input type="text" id="form-id" placeholder="Enter Form ID">
+            <br>
+            <button onclick="fetchFromApi()">Fetch Data</button>
+        </div>
+
+        <!-- Machine Selection and Date Range Section -->
+        <div id="machine-section">
+            <h2>Elegir Maquina</h2>
+            <select id="machine-select"></select>
+
+            <h2>Elegir rango de tiempo</h2>
+            <label for="start-date">Fecha Inicial:</label>
+            <input type="date" id="start-date">
+            <label for="end-date">Fecha Final:</label>
+            <input type="date" id="end-date">
+            <button onclick="calculateDifference()">Calcula Diferencia</button>
+        </div>
+
+        <pre id="output"></pre>
+    </div>
+    
+    <script>
+        let csvData = [];
+    
+        function toggleSource(source) {
+            document.getElementById('file-section').style.display = source === 'file' ? 'block' : 'none';
+            document.getElementById('api-section').style.display = source === 'api' ? 'block' : 'none';
+        }
+        function parseFile() {
+            const file = document.getElementById('csv-file').files[0];
+            if (file) {
+                Papa.parse(file, {
+                    header: true,
+                    complete: function (results) {
+                        csvData = results.data;
+                        populateMachineDropdown();
+                    }
+                });
+            }
+        }
+        function fetchFromApi() {
+            const apiKey = document.getElementById('api-key').value;
+            const formId = document.getElementById('form-id').value;
+    
+            if (!apiKey || !formId) {
+                alert('Please enter both API Key and Form ID.');
+                return;
+            }
+    
+            const url = `https://api.jotform.com/form/${formId}/submissions?apiKey=${apiKey}&limit=240`;
+            fetch(url)
+                .then(response => {
+                    console.log("API Response Status Code:", response.status);
+                    if (response.ok) {
+                        return response.json();
+                    } else {
+                        throw new Error(`Error in API call: ${response.statusText}`);
+                    }
+                })
+                .then(data => {
+                    const submissions = data.content || [];
+                    console.log("Submissions Fetched:", submissions.length);
+                    csvData = submissions.map(entry => {
+                        const answers = entry.answers || {};
+                        const maquina = answers['3'] ? answers['3'].answer : null;
+                        const fecha_revision = answers['2'] ? answers['2'].answer : null;
+                        const horometro_inicial = answers['7'] ? answers['7'].answer : null;
+    
+                        if (fecha_revision && maquina) {
+                            return {
+                                'Fecha Revision': fecha_revision,
+                                'Maquinas SAI': maquina,
+                                'Horometro Inicial': parseFloat(horometro_inicial) || 0
+                            };
+                        }
+                    }).filter(row => row);  // Filter out any undefined entries
+    
+                    populateMachineDropdown();
+                })
+                .catch(error => {
+                    console.error("Error fetching data:", error);
+                });
+        }
+    
+        function populateMachineDropdown() {
+            const machines = [...new Set(csvData.map(row => row['Maquinas SAI']))];
+            const machineSelect = document.getElementById('machine-select');
+            machineSelect.innerHTML = machines.map(machine => `<option value="${machine}">${machine}</option>`).join('');
+            document.getElementById('machine-section').style.display = 'block';
+        }
+    
+
+        function parseCustomDate(dateStr) {
+    if (!dateStr) {
+        console.warn('Missing or invalid date:', dateStr);
+        return null;
+    }
+
+    const monthsMap = {
+        'ene': 'Jan', 'feb': 'Feb', 'mar': 'Mar', 'abr': 'Apr', 'may': 'May', 'jun': 'Jun',
+        'jul': 'Jul', 'ago': 'Aug', 'sep': 'Sep', 'oct': 'Oct', 'nov': 'Nov', 'dic': 'Dec'
+    };
+
+    const regex = /(\w+) (\d+), (\d{4}) (\d+:\d+) ([ap]\. m\.)/;
+    const match = dateStr.match(regex);
+
+    if (match) {
+        const month = monthsMap[match[1].toLowerCase()];
+        const day = match[2];
+        const year = match[3];
+        const time = match[4];
+        const amPm = match[5].includes('a') ? 'AM' : 'PM';
+
+        const formattedDateStr = `${month} ${day}, ${year} ${time} ${amPm}`;
+        return new Date(formattedDateStr);
+    } else {
+        console.warn('Date format mismatch:', dateStr);
+        return null;
+    }
+}
+
+
+
+function calculateDifference() {
+    const selectedMachine = document.getElementById('machine-select').value;
+    const startDate = new Date(document.getElementById('start-date').value);
+    const endDate = new Date(document.getElementById('end-date').value);
+
+    console.log('Selected Machine:', selectedMachine);
+    console.log('Start Date:', startDate);
+    console.log('End Date:', endDate);
+
+    const filteredData = csvData.filter(row => {
+        const date = parseCustomDate(row['Fecha Revision']);
+        const isWithinRange = date && date >= startDate && date <= endDate;
+        if (!date) {
+            console.warn('Skipping row with invalid date:', row);
+        }
+        return row['Maquinas SAI'] === selectedMachine && isWithinRange;
+    });
+
+    console.log('Filtered Data:', filteredData);
+
+    if (filteredData.length > 0) {
+        const horometros = filteredData.map(row => parseFloat(row['Horometro Inicial'])).sort((a, b) => a - b);
+        console.log('Horometros:', horometros);
+
+        const difference = horometros[horometros.length - 1] - horometros[0];
+        console.log('Difference:', difference);
+
+        document.getElementById('output').textContent = `Difference en Horometro Inicial: ${difference}`;
+    } else {
+        document.getElementById('output').textContent = 'No se han encontrado datos validos para la maquina en el rango de tiempo.';
+    }
+}
+
+
+    </script>
+</body>
+</html>
